@@ -29,7 +29,7 @@ SkeletonPtr load_skeleton(const aiNode *node)
   Skeleton skeleton;
   iterate_over_tree(-1, node, skeleton);
 
-  return std::make_shared<Skeleton>(std::move(skeleton));
+  return std::make_shared<const Skeleton>(std::move(skeleton));
 }
 
 void RuntimeSkeleton::updateLocalTransforms()

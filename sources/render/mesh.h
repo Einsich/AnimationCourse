@@ -11,13 +11,10 @@ struct Mesh
   const uint32_t vertexArrayBufferObject;
   const int numIndices;
 
-  struct Bone
-  {
-    std::string name;
-    glm::mat4x4 bindPose, invBindPose;
-  };
+  std::vector<glm::mat4> invBindPose;
+  std::vector<glm::mat4> bindPose;
+  std::map<std::string, int> nodeToBoneMap;
 
-  std::vector<Bone> bones;
 
   Mesh(uint32_t vertexArrayBufferObject, int numIndices) :
     vertexArrayBufferObject(vertexArrayBufferObject),

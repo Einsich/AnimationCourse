@@ -133,21 +133,20 @@ MeshPtr create_mesh(const aiMesh *mesh)
   if (mesh->HasBones())
   {
     int numBones = mesh->mNumBones;
-    meshPtr->bones.resize(numBones);
+    meshPtr->invBindPose.resize(numBones);
+    meshPtr->bindPose.resize(numBones);
     for (int i = 0; i < numBones; i++)
     {
       const aiBone *bone = mesh->mBones[i];
-      assert(bone->mNode != nullptr);
 
-      std::cout << i << ") bone name " << bone->mName.C_Str()<< " node name"<< bone->mNode->mName.C_Str()<< std::endl;
-       //("%d) bone name %s node name %s", i, );
-      //bonesMap[std::string(bone->mName.C_Str())] = i;
-      //glm::mat4x4 mTransformation = glm::make_mat4x4(&bone->mNode->mTransformation.a1);
+      std::cout << i << ") bone name " << bone->mName.C_Str()<< std::endl;
+
+      meshPtr->nodeToBoneMap[std::string(bone->mName.C_Str())] = i;
       glm::mat4x4 mOffsetMatrix = glm::make_mat4x4(&bone->mOffsetMatrix.a1);
       mOffsetMatrix = glm::transpose(mOffsetMatrix);
-      meshPtr->bones[i].invBindPose = mOffsetMatrix;
-      meshPtr->bones[i].bindPose = glm::inverse(mOffsetMatrix);
-      meshPtr->bones[i].name = bone->mName.C_Str();
+      meshPtr->invBindPose[i] = mOffsetMatrix;
+      meshPtr->bindPose[i] = glm::inverse(mOffsetMatrix);
+      // meshPtr->bones[i].name = bone->mName.C_Str();
     }
   }
 

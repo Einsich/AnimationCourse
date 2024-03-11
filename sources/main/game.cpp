@@ -102,23 +102,67 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
   shader.set_vec3("AmbientLight", light.ambient);
   shader.set_vec3("SunLight", light.lightColor);
 
-  render(character.mesh);
+  size_t boneNumber = character.mesh->bindPose.size();
+  std::vector<mat4> bones(boneNumber);
 
   const RuntimeSkeleton &skeleton = character.skeleton;
   size_t nodeCount = skeleton.ref->nodeCount;
   for (size_t i = 0; i < nodeCount; i++)
   {
-    glm::vec3 offset;
+    auto it = character.mesh->nodeToBoneMap.find(skeleton.ref->names[i]);
+    if (it != character.mesh->nodeToBoneMap.end())
+    {
+      int boneIdx = it->second;
+      bones[boneIdx] = skeleton.globalTm[i] * character.mesh->invBindPose[boneIdx];
+    }
+  }
+  shader.set_mat4x4("Bones", bones);
+
+  render(character.mesh);
+
+  for (size_t i = 0; i < nodeCount; i++)
+  {
+    glm::vec3 offset{0,0,0};
     for (size_t j = i; j < nodeCount; j++)
     {
       if (skeleton.ref->parent[j] == int(i))
       {
         offset = glm::vec3(skeleton.localTm[j][3]);
-        break;
+        draw_arrow(skeleton.globalTm[i], vec3(0), offset, vec3(0, 0.5f, 0), 0.01f);
       }
     }
-    draw_arrow(skeleton.globalTm[i], vec3(0), offset, vec3(0, 0.5f, 0), 0.01f);
   }
+}
+
+void render_imguizmo(ImGuizmo::OPERATION &mCurrentGizmoOperation, ImGuizmo::MODE &mCurrentGizmoMode)
+{
+  if (ImGui::Begin("gizmo window"))
+  {
+    if (ImGui::IsKeyPressed('Z'))
+      mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
+    if (ImGui::IsKeyPressed('E'))
+      mCurrentGizmoOperation = ImGuizmo::ROTATE;
+    if (ImGui::IsKeyPressed('R')) // r Key
+      mCurrentGizmoOperation = ImGuizmo::SCALE;
+    if (ImGui::RadioButton("Translate", mCurrentGizmoOperation == ImGuizmo::TRANSLATE))
+      mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Rotate", mCurrentGizmoOperation == ImGuizmo::ROTATE))
+      mCurrentGizmoOperation = ImGuizmo::ROTATE;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Scale", mCurrentGizmoOperation == ImGuizmo::SCALE))
+      mCurrentGizmoOperation = ImGuizmo::SCALE;
+
+    if (mCurrentGizmoOperation != ImGuizmo::SCALE)
+    {
+      if (ImGui::RadioButton("Local", mCurrentGizmoMode == ImGuizmo::LOCAL))
+        mCurrentGizmoMode = ImGuizmo::LOCAL;
+      ImGui::SameLine();
+      if (ImGui::RadioButton("World", mCurrentGizmoMode == ImGuizmo::WORLD))
+        mCurrentGizmoMode = ImGuizmo::WORLD;
+    }
+  }
+  ImGui::End();
 }
 
 void imgui_render()
@@ -129,23 +173,35 @@ void imgui_render()
     character.skeleton.updateLocalTransforms();
     const RuntimeSkeleton &skeleton = character.skeleton;
     size_t nodeCount = skeleton.ref->nodeCount;
+
+    static size_t idx = 0;
+
     if (ImGui::Begin("Skeleton view"))
     {
       for (size_t i = 0; i < nodeCount; i++)
       {
         ImGui::Text("%d) %s", int(i), skeleton.ref->names[i].c_str());
+        ImGui::SameLine();
+        ImGui::PushID(i);
+        if (ImGui::Button("edit"))
+        {
+          idx = i;
+        }
+        ImGui::PopID();
       }
     }
     ImGui::End();
 
+    static ImGuizmo::OPERATION mCurrentGizmoOperation(ImGuizmo::TRANSLATE);
+    static ImGuizmo::MODE mCurrentGizmoMode(ImGuizmo::WORLD);
+    render_imguizmo(mCurrentGizmoOperation, mCurrentGizmoMode);
+
     const glm::mat4 &projection = scene->userCamera.projection;
     const glm::mat4 &transform = scene->userCamera.transform;
     mat4 cameraView = inverse(transform);
-    ImGuizmo::OPERATION mCurrentGizmoOperation(ImGuizmo::TRANSLATE);
-    ImGuizmo::MODE mCurrentGizmoMode(ImGuizmo::WORLD);
     ImGuiIO &io = ImGui::GetIO();
     ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
-    size_t idx = 10;
+
     glm::mat4 globNodeTm = character.skeleton.globalTm[idx];
 
     ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(projection), mCurrentGizmoOperation, mCurrentGizmoMode,

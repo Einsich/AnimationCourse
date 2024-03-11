@@ -14,7 +14,7 @@ struct Skeleton
   std::map<std::string, int> nodeNameToIdx;
 };
 
-using SkeletonPtr = std::shared_ptr<Skeleton>;
+using SkeletonPtr = std::shared_ptr<const Skeleton>;
 
 struct RuntimeSkeleton
 {
