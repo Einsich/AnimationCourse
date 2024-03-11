@@ -7,8 +7,6 @@
 #include <log.h>
 #include "glad/glad.h"
 
-#pragma clang optimize off
-//#pragma optimize(off, "")
 static void create_indices(const std::vector<unsigned int> &indices)
 {
   GLuint arrayIndexBuffer;
@@ -156,25 +154,6 @@ MeshPtr create_mesh(const aiMesh *mesh)
   return meshPtr;
 }
 
-MeshPtr load_mesh(const char *path, int idx)
-{
-
-  Assimp::Importer importer;
-  importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-  importer.SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);
-
-  importer.ReadFile(path, aiPostProcessSteps::aiProcess_Triangulate | aiPostProcessSteps::aiProcess_LimitBoneWeights |
-    aiPostProcessSteps::aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder | aiProcess_PopulateArmatureData);
-
-  const aiScene* scene = importer.GetScene();
-  if (!scene)
-  {
-    debug_error("no asset in %s", path);
-    return nullptr;
-  }
-
-  return create_mesh(scene->mMeshes[idx]);
-}
 
 void render(const MeshPtr &mesh)
 {

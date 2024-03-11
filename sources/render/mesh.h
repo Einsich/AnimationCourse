@@ -27,7 +27,6 @@ struct Mesh
 
 using MeshPtr = std::shared_ptr<Mesh>;
 
-MeshPtr load_mesh(const char *path, int idx);
 MeshPtr make_plane_mesh();
 MeshPtr make_mesh(const std::vector<uint32_t> &indices, const std::vector<vec3> &vertices, const std::vector<vec3> &normals);
 

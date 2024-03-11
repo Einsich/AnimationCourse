@@ -29,7 +29,6 @@ if(WIN32)
     set(ADDITIONAL_LIBS winmm.lib Version.lib Setupapi.lib)
     set(ADDITIONAL_LIBS ${ADDITIONAL_LIBS} SDL2 imm32)
 
-    set(PATH_TO_LIBS ${CMAKE_BINARY_DIR}/../Debug/x64/)
     add_library(SDL2 STATIC IMPORTED)
     set_target_properties(SDL2 PROPERTIES
         IMPORTED_LOCATION_RELEASE "${CMAKE_BINARY_DIR}/libSDL2.a"
