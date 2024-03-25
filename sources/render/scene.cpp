@@ -7,8 +7,8 @@
 
 
 MeshPtr create_mesh(const aiMesh *mesh);
-SkeletonPtr create_skeleton(const aiNode &ai_node) { return nullptr; }
-AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton) { return nullptr; }
+SkeletonPtr create_skeleton(const aiNode &ai_node);
+AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton);
 
 SceneAsset load_scene(const char *path, int load_flags)
 {
