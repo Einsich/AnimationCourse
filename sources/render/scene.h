@@ -23,8 +23,9 @@ struct SceneAsset
   {
     Meshes = 1 << 0,
     Skeleton = 1 << 1,
-    Animation = 1 << 2
+    Animation = 1 << 2,
+    AdditiveAnimation = 1 << 3,
   };
 };
 
-SceneAsset load_scene(const char *path, int load_flags);
+SceneAsset load_scene(const char *path, int load_flags, SkeletonPtr ref_pos = nullptr);

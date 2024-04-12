@@ -12,8 +12,89 @@
 #include "ozz/animation/runtime/local_to_model_job.h"
 #include "ozz/animation/runtime/sampling_job.h"
 #include "ozz/animation/runtime/skeleton.h"
+#include "ozz/animation/runtime/blending_job.h"
 #include "ozz/base/maths/simd_math.h"
 #include "ozz/base/maths/soa_transform.h"
+
+struct PlaybackController
+{
+public:
+  // Updates animation time if in "play" state, according to playback speed and
+  // given frame time _dt.
+  // Returns true if animation has looped during update
+  void Update(const AnimationPtr &_animation, float _dt)
+  {
+    float new_time = time_ratio_;
+
+    if (play_)
+    {
+      new_time = time_ratio_ + _dt * playback_speed_ / _animation->duration();
+    }
+    if (loop_)
+    {
+      // Wraps in the unit interval [0:1], even for negative values (the reason
+      // for using floorf).
+      time_ratio_ = new_time - floorf(new_time);
+    }
+    else
+    {
+      // Clamps in the unit interval [0:1].
+      time_ratio_ = new_time;
+    }
+  }
+
+  void Reset()
+  {
+    time_ratio_ = 0.f;
+    playback_speed_ = 1.f;
+    play_ = true;
+    loop_ = true;
+  }
+
+  // Current animation time ratio, in the unit interval [0,1], where 0 is the
+  // beginning of the animation, 1 is the end.
+  float time_ratio_;
+
+  // Playback speed, can be negative in order to play the animation backward.
+  float playback_speed_;
+
+  // Animation play mode state: play/pause.
+  bool play_;
+
+  // Animation loop mode.
+  bool loop_;
+};
+
+struct AnimationLayer
+{
+  // Constructor, default initialization.
+  AnimationLayer(const SkeletonPtr &skeleton, AnimationPtr animation) : weight(1.f), animation(animation)
+  {
+    controller.Reset();
+
+    locals.resize(skeleton->num_soa_joints());
+
+    // Allocates a context that matches animation requirements.
+    context = std::make_shared<ozz::animation::SamplingJob::Context>(skeleton->num_joints());
+  }
+
+  bool isAdditive = false;
+  // Playback animation controller. This is a utility class that helps with
+  // controlling animation playback time.
+  PlaybackController controller;
+
+  // Blending weight for the layer.
+  float weight;
+
+  // Runtime animation.
+  AnimationPtr animation;
+
+  // Sampling context.
+  std::shared_ptr<ozz::animation::SamplingJob::Context> context;
+
+  // Buffer of local transforms as sampled from animation_.
+  std::vector<ozz::math::SoaTransform> locals;
+};
 
 struct UserCamera
 {
@@ -40,8 +121,10 @@ struct Character
   // Buffer of model space matrices.
   std::vector<ozz::math::Float4x4> models_;
 
+  std::vector<AnimationLayer> layers;
+
   AnimationPtr currentAnimation;
-  float animTime = 0;
+  PlaybackController controller;
 };
 
 struct Scene
@@ -124,6 +207,12 @@ void game_init()
   // Allocates a context that matches animation requirements.
   character.context_ = std::make_shared<ozz::animation::SamplingJob::Context>(num_joints);
 
+  // character.blendTree1D = BlendTree1D({"WalkF, RunF, JogF"})
+  // BlendTree1D float blendRatio [0, 1]
+  // https://guillaumeblanc.github.io/ozz-animation/samples/blend/
+  // BlendTree1D() { make_layer(anim[0]), make_layer(anim[1]), make_layer(anim[2]), }
+  // BlendTree1D::UpdateWeightAndAnimationSpeed()
+
   create_arrow_render();
 
   std::fflush(stdout);
@@ -131,24 +220,72 @@ void game_init()
 
 void game_update()
 {
+  float dt = get_delta_time();
   arcball_camera_update(
       scene->userCamera.arcballCamera,
       scene->userCamera.transform,
-      get_delta_time());
+      dt);
 
   for (Character &character : scene->characters)
   {
-    if (character.currentAnimation)
+
+    if (!character.layers.empty())
     {
-      character.animTime += get_delta_time();
-      if (character.animTime >= character.currentAnimation->duration())
-        character.animTime = 0;
+      for (AnimationLayer &layer : character.layers)
+      {
+        layer.controller.Update(layer.animation, dt);
+
+        // Samples optimized animation at t = animation_time_.
+        ozz::animation::SamplingJob sampling_job;
+        sampling_job.animation = layer.animation.get();
+        sampling_job.context = layer.context.get();
+        sampling_job.ratio = layer.controller.time_ratio_;
+        sampling_job.output = ozz::make_span(layer.locals);
+        if (!sampling_job.Run())
+        {
+          debug_error("sampling_job failed");
+        }
+      }
+
+      // Prepares blending layers.
+      int numLayer = character.layers.size();
+      std::vector<ozz::animation::BlendingJob::Layer> layers, additive;
+
+      for (int i = 0; i < numLayer; ++i)
+      {
+        ozz::animation::BlendingJob::Layer layer;
+        layer.transform = ozz::make_span(character.layers[i].locals);
+        layer.weight = character.layers[i].weight;
+        if (!character.layers[i].isAdditive)
+          layers.push_back(layer);
+        else
+          additive.push_back(layer);
+      }
+
+      // Setups blending job.
+      ozz::animation::BlendingJob blend_job;
+      blend_job.threshold = 0.1;
+      blend_job.layers = ozz::make_span(layers);
+      blend_job.additive_layers = ozz::make_span(additive);
+      blend_job.rest_pose = character.skeleton_->joint_rest_poses();
+      blend_job.output = ozz::make_span(character.locals_);
+
+      // Blends.
+      if (!blend_job.Run())
+      {
+        debug_error("blend_job failed");
+        continue;
+      }
+    }
+    else if (character.currentAnimation)
+    {
+      character.controller.Update(character.currentAnimation, dt);
 
       // Samples optimized animation at t = animation_time_.
       ozz::animation::SamplingJob sampling_job;
       sampling_job.animation = character.currentAnimation.get();
       sampling_job.context = character.context_.get();
-      sampling_job.ratio = character.animTime / character.currentAnimation->duration();
+      sampling_job.ratio = character.controller.time_ratio_;
       sampling_job.output = ozz::make_span(character.locals_);
       if (!sampling_job.Run())
       {
@@ -258,6 +395,37 @@ void render_imguizmo(ImGuizmo::OPERATION &mCurrentGizmoOperation, ImGuizmo::MODE
   ImGui::End();
 }
 
+static void playback_controller_inspector(PlaybackController &controller)
+{
+  ImGui::SliderFloat("progress", &controller.time_ratio_, 0.f, 1.f);
+  ImGui::Checkbox("play/pause", &controller.play_);
+  ImGui::Checkbox("is loop", &controller.loop_);
+  ImGui::DragFloat("speed", &controller.playback_speed_, 0.1f);
+
+  if (ImGui::Button("reset"))
+    controller.Reset();
+}
+
+static AnimationPtr animation_list_combo(SceneAsset::LoadScene animation_type, SkeletonPtr ref_pose)
+{
+  std::vector<const char *> animations(animationList.size() + 1);
+  animations[0] = "None";
+  for (size_t i = 0; i < animationList.size(); i++)
+    animations[i + 1] = animationList[i].c_str();
+  static int item = 0;
+  if (ImGui::Combo("", &item, animations.data(), animations.size()))
+  {
+    if (item > 0)
+    {
+      SceneAsset sceneAsset = load_scene(animations[item],
+                                         SceneAsset::LoadScene::Skeleton | animation_type, ref_pose);
+      if (!sceneAsset.animations.empty())
+        return sceneAsset.animations[0];
+    }
+  }
+  return nullptr;
+}
+
 void imgui_render()
 {
   ImGuizmo::BeginFrame();
@@ -277,23 +445,62 @@ void imgui_render()
 
     if (ImGui::Begin("Animation list"))
     {
-      std::vector<const char *> animations(animationList.size() + 1);
-      animations[0] = "None";
-      for (size_t i = 0; i < animationList.size(); i++)
-        animations[i + 1] = animationList[i].c_str();
-      static int item = 0;
-      if (ImGui::Combo(animations[item], &item, animations.data(), animations.size()))
+      if (ImGui::Button("Play animation"))
+        ImGui::OpenPopup("Select animation to play");
+      if (ImGui::BeginPopup("Select animation to play"))
       {
-        AnimationPtr animation;
-        if (item > 0)
+        if (AnimationPtr animation = animation_list_combo(SceneAsset::LoadScene::Animation, character.skeleton_))
         {
-          SceneAsset sceneAsset = load_scene(animations[item],
-                                             SceneAsset::LoadScene::Skeleton | SceneAsset::LoadScene::Animation);
-          if (!sceneAsset.animations.empty())
-            animation = sceneAsset.animations[0];
+          character.currentAnimation = animation;
+          character.controller.Reset();
+          ImGui::CloseCurrentPopup();
         }
-        character.currentAnimation = animation;
-        character.animTime = 0;
+        ImGui::EndPopup();
+      }
+      if (ImGui::TreeNode("controller"))
+      {
+        playback_controller_inspector(character.controller);
+        ImGui::TreePop();
+      }
+
+      if (ImGui::Button("Add layer"))
+        ImGui::OpenPopup("Add layer to play");
+      if (ImGui::Button("Add additive layer"))
+        ImGui::OpenPopup("Add additive layer to play");
+      if (ImGui::BeginPopup("Add layer to play"))
+      {
+        if (AnimationPtr animation = animation_list_combo(SceneAsset::LoadScene::Animation, character.skeleton_))
+        {
+          character.layers.emplace_back(character.skeleton_, animation);
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+      }
+      if (ImGui::BeginPopup("Add additive layer to play"))
+      {
+        if (AnimationPtr animation = animation_list_combo(SceneAsset::LoadScene::AdditiveAnimation, character.skeleton_))
+        {
+          character.layers.emplace_back(character.skeleton_, animation).isAdditive = true;
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+      }
+
+      for (size_t i = 0; i < character.layers.size(); i++)
+      {
+        AnimationLayer &layer = character.layers[i];
+        ImGui::PushID(i);
+        ImGui::Text("name: %s", layer.animation->name());
+        ImGui::Text("duration: %f", layer.animation->duration());
+        ImGui::DragFloat("weight", &layer.weight, 0.01f, 0.f, 1.f);
+        ImGui::Text("%s", layer.isAdditive ? "is additive" : "not additive");
+
+        if (ImGui::TreeNode("controller"))
+        {
+          playback_controller_inspector(layer.controller);
+          ImGui::TreePop();
+        }
+        ImGui::PopID();
       }
     }
     ImGui::End();

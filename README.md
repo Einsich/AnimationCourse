@@ -8,3 +8,6 @@
 
 # Result of third seminar
 ![Result of third seminar](pictures/sem3.jpg)
+
+# Result of 4th seminar
+![Result of 4th seminar](pictures/sem4.jpg)

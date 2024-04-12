@@ -4,6 +4,7 @@
 #include "ozz/animation/runtime/skeleton.h"
 
 #include "ozz/animation/offline/animation_builder.h"
+#include "ozz/animation/offline/additive_animation_builder.h"
 #include "ozz/animation/offline/animation_optimizer.h"
 #include "ozz/animation/offline/raw_animation.h"
 #include "ozz/animation/runtime/animation.h"
@@ -62,7 +63,7 @@ SkeletonPtr create_skeleton(const aiNode &ai_root)
   return std::shared_ptr<ozz::animation::Skeleton>(std::move(skeleton));
 }
 
-AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton)
+AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton, bool build_as_additive)
 {
 
   ozz::animation::offline::RawAnimation raw_animation;
@@ -74,6 +75,14 @@ AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr
   raw_animation.name = ai_animation.mName.C_Str();
 
   raw_animation.tracks.resize(skeleton->num_joints());
+
+  std::vector<ozz::math::Transform> restPose(skeleton->num_joints());
+
+  for (int jointIdx = 0; jointIdx < skeleton->num_joints(); jointIdx++)
+  {
+    restPose[jointIdx] = ozz::animation::GetJointLocalRestPose(*skeleton, jointIdx);
+  }
+
 
   for (int jointIdx = 0; jointIdx < skeleton->num_joints(); jointIdx++)
   {
@@ -128,7 +137,7 @@ AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr
     }
     else
     {
-      ozz::math::Transform jointTm = ozz::animation::GetJointLocalRestPose(*skeleton, jointIdx);
+      const ozz::math::Transform &jointTm = restPose[jointIdx];
 
       track.translations =
           {ozz::animation::offline::RawAnimation::TranslationKey{0.f, jointTm.translation}};
@@ -161,7 +170,20 @@ AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr
   // a new runtime animation instance.
   // This operation will fail and return an empty unique_ptr if the RawAnimation
   // isn't valid.
-  ozz::unique_ptr<ozz::animation::Animation> animation = builder(raw_animation);
+  ozz::unique_ptr<ozz::animation::Animation> animation;
+  if (build_as_additive)
+  {
+
+    ozz::animation::offline::AdditiveAnimationBuilder additiveBuilder;
+    ozz::animation::offline::RawAnimation output;
+    assert(additiveBuilder(raw_animation, ozz::make_span(restPose), &output));
+    animation = builder(output);
+  }
+  else
+  {
+    animation = builder(raw_animation);
+  }
+
 
   // ...use the animation as you want...
 

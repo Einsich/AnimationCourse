@@ -8,9 +8,9 @@
 
 MeshPtr create_mesh(const aiMesh *mesh);
 SkeletonPtr create_skeleton(const aiNode &ai_node);
-AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton);
+AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton, bool build_as_additive);
 
-SceneAsset load_scene(const char *path, int load_flags)
+SceneAsset load_scene(const char *path, int load_flags, SkeletonPtr ref_pos)
 {
   Assimp::Importer importer;
   importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
@@ -40,7 +40,14 @@ SceneAsset load_scene(const char *path, int load_flags)
   {
     result.animations.reserve(scene->mNumAnimations);
     for (size_t i = 0; i < scene->mNumAnimations; i++)
-      if (AnimationPtr animation = create_animation(*scene->mAnimations[i], result.skeleton))
+      if (AnimationPtr animation = create_animation(*scene->mAnimations[i], ref_pos ? ref_pos : result.skeleton, false))
+        result.animations.emplace_back(std::move(animation));
+  }
+  if (load_flags & SceneAsset::LoadScene::AdditiveAnimation && result.skeleton)
+  {
+    result.animations.reserve(scene->mNumAnimations);
+    for (size_t i = 0; i < scene->mNumAnimations; i++)
+      if (AnimationPtr animation = create_animation(*scene->mAnimations[i], ref_pos ? ref_pos : result.skeleton, true))
         result.animations.emplace_back(std::move(animation));
   }
 
