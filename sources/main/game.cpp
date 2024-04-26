@@ -152,6 +152,31 @@ static std::vector<std::string> scan_animations(const char *path)
   return animations;
 }
 
+Character create_character(glm::vec3 position, MeshPtr mesh, MaterialPtr material, SkeletonPtr skeleton, AnimationPtr animation)
+{
+  Character character;
+  character.transform = glm::translate(position);
+  character.mesh = mesh;
+  character.material = material;
+  character.skeleton_ = skeleton;
+
+  // Skeleton and animation needs to match.
+  // assert (character.skeleton_->num_joints() != character.animation_.num_tracks());
+
+  // Allocates runtime buffers.
+  const int num_soa_joints = character.skeleton_->num_soa_joints();
+  character.locals_.resize(num_soa_joints);
+  const int num_joints = character.skeleton_->num_joints();
+  character.models_.resize(num_joints);
+
+  // Allocates a context that matches animation requirements.
+  character.context_ = std::make_shared<ozz::animation::SamplingJob::Context>(num_joints);
+
+  character.currentAnimation = animation;
+  character.controller.Reset();
+  return character;
+}
+
 void game_init()
 {
   animationList = scan_animations("resources/Animations");
@@ -189,30 +214,30 @@ void game_init()
   SceneAsset sceneAsset = load_scene("resources/MotusMan_v55/MotusMan_v55.fbx",
                                      SceneAsset::LoadScene::Meshes | SceneAsset::LoadScene::Skeleton);
 
-  Character &character = scene->characters.emplace_back(Character{
-      glm::identity<glm::mat4>(),
+  SceneAsset runAnimationAsset = load_scene("resources/Animations/IPC/MOB1_Run_F_Loop_IPC.fbx",
+                                            SceneAsset::LoadScene::Skeleton | SceneAsset::LoadScene::Animation, nullptr);
+
+  AnimationPtr runAnimation;
+  if (!runAnimationAsset.animations.empty())
+    runAnimation = runAnimationAsset.animations[0];
+
+  scene->characters.emplace_back(create_character(
+      glm::vec3(0, 0, 0),
       sceneAsset.meshes[0],
-      std::move(material),
-      sceneAsset.skeleton});
-
-  // Skeleton and animation needs to match.
-  // assert (character.skeleton_->num_joints() != character.animation_.num_tracks());
-
-  // Allocates runtime buffers.
-  const int num_soa_joints = character.skeleton_->num_soa_joints();
-  character.locals_.resize(num_soa_joints);
-  const int num_joints = character.skeleton_->num_joints();
-  character.models_.resize(num_joints);
-
-  // Allocates a context that matches animation requirements.
-  character.context_ = std::make_shared<ozz::animation::SamplingJob::Context>(num_joints);
-
-  // character.blendTree1D = BlendTree1D({"WalkF, RunF, JogF"})
-  // BlendTree1D float blendRatio [0, 1]
-  // https://guillaumeblanc.github.io/ozz-animation/samples/blend/
-  // BlendTree1D() { make_layer(anim[0]), make_layer(anim[1]), make_layer(anim[2]), }
-  // BlendTree1D::UpdateWeightAndAnimationSpeed()
-
+      material,
+      sceneAsset.skeleton, runAnimation));
+  int n = 10;
+  int m = 10;
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < m; j++)
+    {
+      glm::vec3 position(i - n / 2, 0, j - m);
+      scene->characters.emplace_back(create_character(
+          position,
+          sceneAsset.meshes[0],
+          material,
+          sceneAsset.skeleton, runAnimation));
+    }
   create_arrow_render();
 
   std::fflush(stdout);
