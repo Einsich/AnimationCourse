@@ -87,7 +87,13 @@ include_directories(${SRC_ROOT})
 include_directories(${SRC_ROOT}/engine)
 include_directories(${SRC_ROOT}/3rd_party)
 
+add_folder(3rd_party/optick/src)
+include_directories(${SRC_ROOT}/3rd_party/optick/include)
+
 add_executable(${EXE_NAME} ${EXE_SOURCES})
 
 target_link_libraries(${EXE_NAME} ${ADDITIONAL_LIBS})
 
+target_compile_definitions(${EXE_NAME} PUBLIC OPTICK_ENABLE_GPU_VULKAN=0)
+target_compile_definitions(${EXE_NAME} PUBLIC OPTICK_ENABLE_GPU_D3D12=0)
+target_compile_definitions(${EXE_NAME} PUBLIC OPTICK_ENABLE_TRACING=1)
