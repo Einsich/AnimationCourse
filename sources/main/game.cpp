@@ -16,6 +16,8 @@
 #include "ozz/base/maths/simd_math.h"
 #include "ozz/base/maths/soa_transform.h"
 
+#include <optick.h>
+
 struct PlaybackController
 {
 public:
@@ -243,6 +245,87 @@ void game_init()
   std::fflush(stdout);
 }
 
+void update_character(Character &character, float dt)
+{
+
+  if (!character.layers.empty())
+  {
+    for (AnimationLayer &layer : character.layers)
+    {
+      layer.controller.Update(layer.animation, dt);
+
+      // Samples optimized animation at t = animation_time_.
+      ozz::animation::SamplingJob sampling_job;
+      sampling_job.animation = layer.animation.get();
+      sampling_job.context = layer.context.get();
+      sampling_job.ratio = layer.controller.time_ratio_;
+      sampling_job.output = ozz::make_span(layer.locals);
+      if (!sampling_job.Run())
+      {
+        debug_error("sampling_job failed");
+      }
+    }
+
+    // Prepares blending layers.
+    int numLayer = character.layers.size();
+    std::vector<ozz::animation::BlendingJob::Layer> layers, additive;
+
+    for (int i = 0; i < numLayer; ++i)
+    {
+      ozz::animation::BlendingJob::Layer layer;
+      layer.transform = ozz::make_span(character.layers[i].locals);
+      layer.weight = character.layers[i].weight;
+      if (!character.layers[i].isAdditive)
+        layers.push_back(layer);
+      else
+        additive.push_back(layer);
+    }
+
+    // Setups blending job.
+    ozz::animation::BlendingJob blend_job;
+    blend_job.threshold = 0.1;
+    blend_job.layers = ozz::make_span(layers);
+    blend_job.additive_layers = ozz::make_span(additive);
+    blend_job.rest_pose = character.skeleton_->joint_rest_poses();
+    blend_job.output = ozz::make_span(character.locals_);
+
+    // Blends.
+    if (!blend_job.Run())
+    {
+      debug_error("blend_job failed");
+      return;
+    }
+  }
+  else if (character.currentAnimation)
+  {
+    character.controller.Update(character.currentAnimation, dt);
+
+    // Samples optimized animation at t = animation_time_.
+    ozz::animation::SamplingJob sampling_job;
+    sampling_job.animation = character.currentAnimation.get();
+    sampling_job.context = character.context_.get();
+    sampling_job.ratio = character.controller.time_ratio_;
+    sampling_job.output = ozz::make_span(character.locals_);
+    if (!sampling_job.Run())
+    {
+      return;
+    }
+  }
+  else
+  {
+    auto restPose = character.skeleton_->joint_rest_poses();
+    std::copy(restPose.begin(), restPose.end(), character.locals_.begin());
+  }
+  ozz::animation::LocalToModelJob ltm_job;
+  ltm_job.skeleton = character.skeleton_.get();
+  ltm_job.input = ozz::make_span(character.locals_);
+  ltm_job.output = ozz::make_span(character.models_);
+  if (!ltm_job.Run())
+  {
+    return;
+  }
+}
+
 void game_update()
 {
   float dt = get_delta_time();
@@ -253,83 +336,8 @@ void game_update()
 
   for (Character &character : scene->characters)
   {
-
-    if (!character.layers.empty())
-    {
-      for (AnimationLayer &layer : character.layers)
-      {
-        layer.controller.Update(layer.animation, dt);
-
-        // Samples optimized animation at t = animation_time_.
-        ozz::animation::SamplingJob sampling_job;
-        sampling_job.animation = layer.animation.get();
-        sampling_job.context = layer.context.get();
-        sampling_job.ratio = layer.controller.time_ratio_;
-        sampling_job.output = ozz::make_span(layer.locals);
-        if (!sampling_job.Run())
-        {
-          debug_error("sampling_job failed");
-        }
-      }
-
-      // Prepares blending layers.
-      int numLayer = character.layers.size();
-      std::vector<ozz::animation::BlendingJob::Layer> layers, additive;
-
-      for (int i = 0; i < numLayer; ++i)
-      {
-        ozz::animation::BlendingJob::Layer layer;
-        layer.transform = ozz::make_span(character.layers[i].locals);
-        layer.weight = character.layers[i].weight;
-        if (!character.layers[i].isAdditive)
-          layers.push_back(layer);
-        else
-          additive.push_back(layer);
-      }
-
-      // Setups blending job.
-      ozz::animation::BlendingJob blend_job;
-      blend_job.threshold = 0.1;
-      blend_job.layers = ozz::make_span(layers);
-      blend_job.additive_layers = ozz::make_span(additive);
-      blend_job.rest_pose = character.skeleton_->joint_rest_poses();
-      blend_job.output = ozz::make_span(character.locals_);
-
-      // Blends.
-      if (!blend_job.Run())
-      {
-        debug_error("blend_job failed");
-        continue;
-      }
-    }
-    else if (character.currentAnimation)
-    {
-      character.controller.Update(character.currentAnimation, dt);
-
-      // Samples optimized animation at t = animation_time_.
-      ozz::animation::SamplingJob sampling_job;
-      sampling_job.animation = character.currentAnimation.get();
-      sampling_job.context = character.context_.get();
-      sampling_job.ratio = character.controller.time_ratio_;
-      sampling_job.output = ozz::make_span(character.locals_);
-      if (!sampling_job.Run())
-      {
-        continue;
-      }
-    }
-    else
-    {
-      auto restPose = character.skeleton_->joint_rest_poses();
-      std::copy(restPose.begin(), restPose.end(), character.locals_.begin());
-    }
-    ozz::animation::LocalToModelJob ltm_job;
-    ltm_job.skeleton = character.skeleton_.get();
-    ltm_job.input = ozz::make_span(character.locals_);
-    ltm_job.output = ozz::make_span(character.models_);
-    if (!ltm_job.Run())
-    {
-      continue;
-    }
+    OPTICK_EVENT("update_character");
+    update_character(character, dt);
   }
 }
 
@@ -340,7 +348,7 @@ static glm::mat4 to_glm(const ozz::math::Float4x4 &tm)
   return result;
 }
 
-void render_character(const Character &character, const mat4 &cameraProjView, vec3 cameraPosition, const DirectionLight &light)
+void render_character(const Character &character, const mat4 &cameraProjView, vec3 cameraPosition, const DirectionLight &light, bool render_bones)
 {
   const Material &material = *character.material;
   const Shader &shader = material.get_shader();
@@ -372,6 +380,8 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
 
   render(character.mesh);
 
+  if (!render_bones)
+    return;
   for (size_t i = 0; i < nodeCount; i++)
   {
     for (size_t j = i; j < nodeCount; j++)
@@ -563,10 +573,16 @@ void game_render()
   const glm::mat4 &transform = scene->userCamera.transform;
   glm::mat4 projView = projection * inverse(transform);
 
-  for (const Character &character : scene->characters)
-    render_character(character, projView, glm::vec3(transform[3]), scene->light);
+  for (size_t i = 0; i < scene->characters.size(); i++)
+  {
+    OPTICK_EVENT("render_character");
+    render_character(scene->characters[i], projView, glm::vec3(transform[3]), scene->light, i == 0);
+  }
 
-  render_arrows(projView, glm::vec3(transform[3]), scene->light);
+  {
+    OPTICK_EVENT("render_arrows");
+    render_arrows(projView, glm::vec3(transform[3]), scene->light);
+  }
 }
 
 void close_game()

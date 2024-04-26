@@ -3,6 +3,7 @@
 #include <imgui/imgui_impl_opengl3.h>
 #include <imgui/imgui_impl_sdl.h>
 #include <SDL2/SDL.h>
+#include <optick.h>
 
 extern void game_init();
 extern void game_update();
@@ -64,6 +65,7 @@ void close_application()
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();
   SDL_Quit();
+  OPTICK_SHUTDOWN();
 }
 
 
@@ -108,16 +110,22 @@ void main_loop()
   bool running = true;
   while (running)
   {
+    OPTICK_FRAME("MainThread");
     update_time();
 
 		running = sdl_event_handler();
 
     if (running)
     {
-      game_update();
-      SDL_GL_SwapWindow(context.window);
+      {
+        OPTICK_EVENT("game_update");
+        game_update();
+      }
 
-      game_render();
+      {
+        OPTICK_EVENT("game_render");
+        game_render();
+      }
 
       ImGui_ImplOpenGL3_NewFrame();
       ImGui_ImplSDL2_NewFrame(context.window);
@@ -128,10 +136,15 @@ void main_loop()
           ImGui::EndMainMenuBar();
         }
       }
-      imgui_render();
+      {
+        OPTICK_EVENT("imgui_render");
+        imgui_render();
+      }
+
 
       ImGui::Render();
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      SDL_GL_SwapWindow(context.window);
     }
 	}
 }
