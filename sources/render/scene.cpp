@@ -6,7 +6,7 @@
 #include <log.h>
 
 
-MeshPtr create_mesh(const aiMesh *mesh);
+MeshPtr create_mesh(const aiMesh *mesh, const SkeletonPtr &skeleton);
 SkeletonPtr create_skeleton(const aiNode &ai_node);
 AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton, bool build_as_additive);
 
@@ -26,15 +26,15 @@ SceneAsset load_scene(const char *path, int load_flags, SkeletonPtr ref_pos)
     debug_error("no asset in %s", path);
     return result;
   }
+  if (load_flags & SceneAsset::LoadScene::Skeleton)
+  {
+    result.skeleton = create_skeleton(*scene->mRootNode);
+  }
   if (load_flags & SceneAsset::LoadScene::Meshes)
   {
     result.meshes.reserve(scene->mNumMeshes);
     for (size_t i = 0; i < scene->mNumMeshes; i++)
-      result.meshes.emplace_back(create_mesh(scene->mMeshes[i]));
-  }
-  if (load_flags & SceneAsset::LoadScene::Skeleton)
-  {
-    result.skeleton = create_skeleton(*scene->mRootNode);
+      result.meshes.emplace_back(create_mesh(scene->mMeshes[i], result.skeleton));
   }
   if (load_flags & SceneAsset::LoadScene::Animation && result.skeleton)
   {

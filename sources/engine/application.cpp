@@ -144,7 +144,11 @@ void main_loop()
 
       ImGui::Render();
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-      SDL_GL_SwapWindow(context.window);
+
+      {
+        OPTICK_EVENT("SDL_GL_SwapWindow");
+        SDL_GL_SwapWindow(context.window);
+      }
     }
 	}
 }

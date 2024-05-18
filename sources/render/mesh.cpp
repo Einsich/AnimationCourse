@@ -6,6 +6,13 @@
 #include <assimp/postprocess.h>
 #include <log.h>
 #include "glad/glad.h"
+#include "scene.h"
+
+#include "ozz/animation/runtime/skeleton.h"
+#include "ozz/animation/runtime/skeleton_utils.h"
+#include "ozz/animation/runtime/local_to_model_job.h"
+#include "ozz/base/maths/simd_math.h"
+
 
 static void create_indices(const std::vector<unsigned int> &indices)
 {
@@ -58,7 +65,7 @@ MeshPtr create_mesh(const std::vector<unsigned int> &indices, const Channel&... 
 }
 
 
-MeshPtr create_mesh(const aiMesh *mesh)
+MeshPtr create_mesh(const aiMesh *mesh, const SkeletonPtr &skeleton)
 {
   std::vector<uint32_t> indices;
   std::vector<vec3> vertices;
@@ -102,11 +109,43 @@ MeshPtr create_mesh(const aiMesh *mesh)
       uv[i] = to_vec2(mesh->mTextureCoords[0][i]);
   }
 
-  if (mesh->HasBones())
+  std::vector<ozz::math::Float4x4> invBindPose;
+  std::vector<ozz::math::Float4x4> bindPose;
+
+  if (mesh->HasBones() && skeleton)
   {
+
+    int numJoints = skeleton->num_joints();
+    std::vector<ozz::math::Float4x4> worldTm(numJoints);
+
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = skeleton.get();
+    ltm_job.input = skeleton->joint_rest_poses();
+    ltm_job.output = ozz::make_span(worldTm);
+    bool result = ltm_job.Run();
+    assert(result);
+
+    invBindPose.resize(numJoints, ozz::math::Float4x4::identity());
+    bindPose.resize(numJoints);
+
+    int numBones = mesh->mNumBones;
+    std::vector<int> boneRemap(numBones, -1); //assimp
+    for (int i = 0; i < numBones; i++)
+    {
+      const aiBone *bone = mesh->mBones[i];
+      int idx = ozz::animation::FindJoint(*skeleton, bone->mName.C_Str());
+      auto tm = worldTm[idx];
+
+      std::cout << i << ") bone name " << bone->mName.C_Str()<< std::endl;
+
+      boneRemap[i] = idx;
+      invBindPose[idx] = ozz::math::Invert(tm);
+      bindPose[idx] = tm;
+    }
+
     weights.resize(numVert, vec4(0.f));
     weightsIndex.resize(numVert);
-    int numBones = mesh->mNumBones;
+
     std::vector<int> weightsOffset(numVert, 0);
     for (int i = 0; i < numBones; i++)
     {
@@ -117,7 +156,7 @@ MeshPtr create_mesh(const aiMesh *mesh)
         int vertex = bone->mWeights[j].mVertexId;
         int offset = weightsOffset[vertex]++;
         weights[vertex][offset] = bone->mWeights[j].mWeight;
-        weightsIndex[vertex][offset] = i;
+        weightsIndex[vertex][offset] = boneRemap[i];
       }
     }
     //the sum of weights not 1
@@ -130,24 +169,10 @@ MeshPtr create_mesh(const aiMesh *mesh)
   }
   auto meshPtr = create_mesh(indices, vertices, normals, uv, weights, weightsIndex);
 
-  if (mesh->HasBones())
+  if (mesh->HasBones() && skeleton)
   {
-    int numBones = mesh->mNumBones;
-    meshPtr->invBindPose.resize(numBones);
-    meshPtr->bindPose.resize(numBones);
-    for (int i = 0; i < numBones; i++)
-    {
-      const aiBone *bone = mesh->mBones[i];
-
-      std::cout << i << ") bone name " << bone->mName.C_Str()<< std::endl;
-
-      meshPtr->nodeToBoneMap[std::string(bone->mName.C_Str())] = i;
-      glm::mat4x4 mOffsetMatrix = glm::make_mat4x4(&bone->mOffsetMatrix.a1);
-      mOffsetMatrix = glm::transpose(mOffsetMatrix);
-      meshPtr->invBindPose[i] = mOffsetMatrix;
-      meshPtr->bindPose[i] = glm::inverse(mOffsetMatrix);
-      // meshPtr->bones[i].name = bone->mName.C_Str();
-    }
+    meshPtr->bindPose = std::move(bindPose);
+    meshPtr->invBindPose = std::move(invBindPose);
   }
 
   return meshPtr;

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <3dmath.h>
+#include "ozz/base/maths/simd_math.h"
 
 
 struct Mesh
@@ -11,9 +12,8 @@ struct Mesh
   const uint32_t vertexArrayBufferObject;
   const int numIndices;
 
-  std::vector<glm::mat4> invBindPose;
-  std::vector<glm::mat4> bindPose;
-  std::map<std::string, int> nodeToBoneMap;
+  std::vector<ozz::math::Float4x4> invBindPose;
+  std::vector<ozz::math::Float4x4> bindPose;
 
 
   Mesh(uint32_t vertexArrayBufferObject, int numIndices) :

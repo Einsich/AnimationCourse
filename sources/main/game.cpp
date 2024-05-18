@@ -127,6 +127,7 @@ struct Character
 
   AnimationPtr currentAnimation;
   PlaybackController controller;
+
 };
 
 struct Scene
@@ -163,7 +164,7 @@ Character create_character(glm::vec3 position, MeshPtr mesh, MaterialPtr materia
   character.skeleton_ = skeleton;
 
   // Skeleton and animation needs to match.
-  // assert (character.skeleton_->num_joints() != character.animation_.num_tracks());
+  assert (character.skeleton_->num_joints() == animation->num_tracks());
 
   // Allocates runtime buffers.
   const int num_soa_joints = character.skeleton_->num_soa_joints();
@@ -217,7 +218,7 @@ void game_init()
                                      SceneAsset::LoadScene::Meshes | SceneAsset::LoadScene::Skeleton);
 
   SceneAsset runAnimationAsset = load_scene("resources/Animations/IPC/MOB1_Run_F_Loop_IPC.fbx",
-                                            SceneAsset::LoadScene::Skeleton | SceneAsset::LoadScene::Animation, nullptr);
+                                            SceneAsset::LoadScene::Skeleton | SceneAsset::LoadScene::Animation, sceneAsset.skeleton);
 
   AnimationPtr runAnimation;
   if (!runAnimationAsset.animations.empty())
@@ -337,6 +338,7 @@ void game_update()
   for (Character &character : scene->characters)
   {
     OPTICK_EVENT("update_character");
+
     update_character(character, dt);
   }
 }
@@ -352,6 +354,7 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
 {
   const Material &material = *character.material;
   const Shader &shader = material.get_shader();
+  const Mesh &mesh = *character.mesh;
 
   shader.use();
   material.bind_uniforms_to_shader();
@@ -362,26 +365,31 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
   shader.set_vec3("AmbientLight", light.ambient);
   shader.set_vec3("SunLight", light.lightColor);
 
-  size_t boneNumber = character.mesh->bindPose.size();
-  std::vector<mat4> bones(boneNumber);
+  size_t boneNumber = mesh.bindPose.size();
+  std::vector<ozz::math::Float4x4> bones(boneNumber);
+
 
   const auto &skeleton = *character.skeleton_;
   size_t nodeCount = skeleton.num_joints();
-  for (size_t i = 0; i < nodeCount; i++)
+  assert(boneNumber == nodeCount);
   {
-    auto it = character.mesh->nodeToBoneMap.find(skeleton.joint_names()[i]);
-    if (it != character.mesh->nodeToBoneMap.end())
+    OPTICK_EVENT("matrix gather");
+    for (size_t i = 0; i < nodeCount; i++)
     {
-      int boneIdx = it->second;
-      bones[boneIdx] = to_glm(character.models_[i]) * character.mesh->invBindPose[boneIdx];
+      bones[i] = character.models_[i] * mesh.invBindPose[i];
     }
   }
-  shader.set_mat4x4("Bones", bones);
+  shader.set_mat4x4("Bones", std::span<glm::mat4>{reinterpret_cast<glm::mat4 *>(bones.data()), boneNumber});
 
-  render(character.mesh);
+  {
+    OPTICK_EVENT("render");
+    render(character.mesh);
+  }
 
   if (!render_bones)
     return;
+
+  OPTICK_EVENT("bone_render");
   for (size_t i = 0; i < nodeCount; i++)
   {
     for (size_t j = i; j < nodeCount; j++)
