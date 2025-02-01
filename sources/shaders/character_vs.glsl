@@ -1,4 +1,4 @@
-#version 330
+#version 460
 
 struct VsOutput
 {
@@ -10,8 +10,12 @@ struct VsOutput
 uniform mat4 Transform;
 uniform mat4 ViewProjection;
 
-const int N = 128;
-uniform mat4 Bones[N];
+
+layout(std140, binding = 0) readonly buffer InstanceBones
+{
+  mat4 Bones[];
+};
+
 
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec3 Normal;

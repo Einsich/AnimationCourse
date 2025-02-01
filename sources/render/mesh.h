@@ -13,8 +13,8 @@ struct Mesh
   const int numIndices;
 
   std::vector<ozz::math::Float4x4> invBindPose;
-  std::vector<ozz::math::Float4x4> bindPose;
 
+  int rootJoint = -1;
 
   Mesh(uint32_t vertexArrayBufferObject, int numIndices) :
     vertexArrayBufferObject(vertexArrayBufferObject),

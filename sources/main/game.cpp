@@ -2,6 +2,7 @@
 #include <render/direction_light.h>
 #include <render/material.h>
 #include <render/scene.h>
+#include <render/global_uniform.h>
 #include "camera.h"
 #include <application.h>
 #include <render/debug_arrow.h>
@@ -74,10 +75,10 @@ struct AnimationLayer
   {
     controller.Reset();
 
-    locals.resize(skeleton->num_soa_joints());
+    locals.resize(skeleton->skeleton->num_soa_joints());
 
     // Allocates a context that matches animation requirements.
-    context = std::make_shared<ozz::animation::SamplingJob::Context>(skeleton->num_joints());
+    context = std::make_shared<ozz::animation::SamplingJob::Context>(skeleton->skeleton->num_joints());
   }
 
   bool isAdditive = false;
@@ -108,8 +109,9 @@ struct UserCamera
 struct Character
 {
   glm::mat4 transform;
-  MeshPtr mesh;
+  std::vector<MeshPtr> meshes;
   MaterialPtr material;
+  GPUBuffer skeletonBuffer;
 
   // Runtime skeleton.
   SkeletonPtr skeleton_;
@@ -155,21 +157,20 @@ static std::vector<std::string> scan_animations(const char *path)
   return animations;
 }
 
-Character create_character(glm::vec3 position, MeshPtr mesh, MaterialPtr material, SkeletonPtr skeleton, AnimationPtr animation)
+Character create_character(glm::vec3 position, std::vector<MeshPtr> meshes, MaterialPtr material, SkeletonPtr skeleton, AnimationPtr animation)
 {
   Character character;
   character.transform = glm::translate(position);
-  character.mesh = mesh;
+  character.meshes = std::move(meshes);
   character.material = material;
   character.skeleton_ = skeleton;
-
   // Skeleton and animation needs to match.
-  assert (character.skeleton_->num_joints() == animation->num_tracks());
+  assert (character.skeleton_->skeleton->num_joints() == animation->num_tracks());
 
   // Allocates runtime buffers.
-  const int num_soa_joints = character.skeleton_->num_soa_joints();
+  const int num_soa_joints = character.skeleton_->skeleton->num_soa_joints();
   character.locals_.resize(num_soa_joints);
-  const int num_joints = character.skeleton_->num_joints();
+  const int num_joints = character.skeleton_->skeleton->num_joints();
   character.models_.resize(num_joints);
 
   // Allocates a context that matches animation requirements.
@@ -177,6 +178,9 @@ Character create_character(glm::vec3 position, MeshPtr mesh, MaterialPtr materia
 
   character.currentAnimation = animation;
   character.controller.Reset();
+
+  character.skeletonBuffer = GPUBuffer(BufferType::Storage, 0, sizeof(ozz::math::Float4x4) * num_joints);
+
   return character;
 }
 
@@ -210,6 +214,19 @@ void game_init()
   input.onMouseWheelEvent += [](const SDL_MouseWheelEvent &e)
   { arccam_mouse_wheel_handler(e, scene->userCamera.arcballCamera); };
 
+  {
+    auto material = make_material("character", "sources/shaders/character_vs.glsl", "sources/shaders/character_ps.glsl");
+    material->set_property("mainTex", create_texture2d("resources/sketchfab/color.png"));
+    SceneAsset sceneAsset = load_scene("resources/sketchfab/ruby.fbx",
+                                      SceneAsset::LoadScene::Meshes | SceneAsset::LoadScene::Skeleton | SceneAsset::LoadScene::Animation);
+
+    scene->characters.emplace_back(create_character(
+        glm::vec3(1, 0, 0),
+        sceneAsset.meshes,
+        material,
+        sceneAsset.skeleton, sceneAsset.animations[0]));
+
+  }
   auto material = make_material("character", "sources/shaders/character_vs.glsl", "sources/shaders/character_ps.glsl");
   std::fflush(stdout);
   material->set_property("mainTex", create_texture2d("resources/MotusMan_v55/MCG_diff.jpg"));
@@ -226,9 +243,13 @@ void game_init()
 
   scene->characters.emplace_back(create_character(
       glm::vec3(0, 0, 0),
-      sceneAsset.meshes[0],
+      sceneAsset.meshes,
       material,
       sceneAsset.skeleton, runAnimation));
+
+  const bool stressTest = false;
+  if (stressTest)
+  {
   int n = 10;
   int m = 10;
   for (int i = 0; i < n; i++)
@@ -237,10 +258,11 @@ void game_init()
       glm::vec3 position(i - n / 2, 0, j - m);
       scene->characters.emplace_back(create_character(
           position,
-          sceneAsset.meshes[0],
+          sceneAsset.meshes,
           material,
           sceneAsset.skeleton, runAnimation));
     }
+  }
   create_arrow_render();
 
   std::fflush(stdout);
@@ -287,7 +309,7 @@ void update_character(Character &character, float dt)
     blend_job.threshold = 0.1;
     blend_job.layers = ozz::make_span(layers);
     blend_job.additive_layers = ozz::make_span(additive);
-    blend_job.rest_pose = character.skeleton_->joint_rest_poses();
+    blend_job.rest_pose = character.skeleton_->skeleton->joint_rest_poses();
     blend_job.output = ozz::make_span(character.locals_);
 
     // Blends.
@@ -314,11 +336,11 @@ void update_character(Character &character, float dt)
   }
   else
   {
-    auto restPose = character.skeleton_->joint_rest_poses();
+    auto restPose = character.skeleton_->skeleton->joint_rest_poses();
     std::copy(restPose.begin(), restPose.end(), character.locals_.begin());
   }
   ozz::animation::LocalToModelJob ltm_job;
-  ltm_job.skeleton = character.skeleton_.get();
+  ltm_job.skeleton = character.skeleton_->skeleton.get();
   ltm_job.input = ozz::make_span(character.locals_);
   ltm_job.output = ozz::make_span(character.models_);
   if (!ltm_job.Run())
@@ -354,7 +376,6 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
 {
   const Material &material = *character.material;
   const Shader &shader = material.get_shader();
-  const Mesh &mesh = *character.mesh;
 
   shader.use();
   material.bind_uniforms_to_shader();
@@ -365,25 +386,30 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
   shader.set_vec3("AmbientLight", light.ambient);
   shader.set_vec3("SunLight", light.lightColor);
 
-  size_t boneNumber = mesh.bindPose.size();
-  std::vector<ozz::math::Float4x4> bones(boneNumber);
+  const auto &skeleton = *character.skeleton_->skeleton;
+  size_t boneNumber = character.skeleton_->bindPose.size();
+  std::vector<ozz::math::Float4x4> bones(boneNumber/* , ozz::math::Float4x4::identity() */);
 
 
-  const auto &skeleton = *character.skeleton_;
   size_t nodeCount = skeleton.num_joints();
   assert(boneNumber == nodeCount);
-  {
-    OPTICK_EVENT("matrix gather");
-    for (size_t i = 0; i < nodeCount; i++)
-    {
-      bones[i] = character.models_[i] * mesh.invBindPose[i];
-    }
-  }
-  shader.set_mat4x4("Bones", std::span<glm::mat4>{reinterpret_cast<glm::mat4 *>(bones.data()), boneNumber});
+
+  character.skeletonBuffer.bind();
 
   {
     OPTICK_EVENT("render");
-    render(character.mesh);
+    for (const MeshPtr &mesh : character.meshes)
+    {
+      {
+        OPTICK_EVENT("matrix gather");
+        for (size_t i = 0; i < nodeCount; i++)
+        {
+          bones[i] = character.models_[i] * mesh->invBindPose[i];
+        }
+      }
+      character.skeletonBuffer.update_buffer(bones.data(), sizeof(ozz::math::Float4x4) * boneNumber);
+      render(mesh);
+    }
   }
 
   if (!render_bones)
@@ -474,7 +500,7 @@ void imgui_render()
   ImGuizmo::BeginFrame();
   for (Character &character : scene->characters)
   {
-    const auto &skeleton = *character.skeleton_;
+    const auto &skeleton = *character.skeleton_->skeleton;
     size_t nodeCount = skeleton.num_joints();
 
     if (ImGui::Begin("Skeleton view"))
@@ -584,7 +610,7 @@ void game_render()
   for (size_t i = 0; i < scene->characters.size(); i++)
   {
     OPTICK_EVENT("render_character");
-    render_character(scene->characters[i], projView, glm::vec3(transform[3]), scene->light, i == 0);
+    render_character(scene->characters[i], projView, glm::vec3(transform[3]), scene->light, i < 10);
   }
 
   {

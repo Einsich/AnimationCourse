@@ -10,6 +10,8 @@
 #include "ozz/animation/runtime/animation.h"
 #include "ozz/animation/runtime/skeleton_utils.h"
 
+#include "ozz/animation/runtime/local_to_model_job.h"
+
 #include <assimp/scene.h>
 #include "render/scene.h"
 #include "log.h"
@@ -17,6 +19,7 @@
 void build_skeleton(ozz::animation::offline::RawSkeleton::Joint &root, const aiNode &ai_root)
 {
   root.name = ai_root.mName.C_Str();
+  debug_log("joint %s", root.name.c_str());
 
   aiVector3D scaling;
   aiQuaternion rotation;
@@ -59,11 +62,33 @@ SkeletonPtr create_skeleton(const aiNode &ai_root)
   // This operation will fail and return an empty unique_ptr if the RawSkeleton
   // isn't valid.
   ozz::unique_ptr<ozz::animation::Skeleton> skeleton = builder(raw_skeleton);
+  Skeleton result;
 
-  return std::shared_ptr<ozz::animation::Skeleton>(std::move(skeleton));
+  int numJoints = skeleton->num_joints();
+  std::vector<ozz::math::Float4x4> worldTm(numJoints);
+
+  ozz::animation::LocalToModelJob ltm_job;
+  ltm_job.skeleton = skeleton.get();
+  ltm_job.input = skeleton->joint_rest_poses();
+  ltm_job.output = ozz::make_span(worldTm);
+
+  if (!ltm_job.Run())
+    debug_error("ltm_job failed in create_skeleton");
+
+  result.invBindPose.resize(numJoints, ozz::math::Float4x4::identity());
+  result.bindPose.resize(numJoints);
+
+  for (int i = 0; i < numJoints; i++)
+  {
+    result.invBindPose[i] = ozz::math::Invert(worldTm[i]);
+    result.bindPose[i] = worldTm[i];
+  }
+
+  result.skeleton = std::move(skeleton);
+  return std::make_shared<Skeleton>(std::move(result));
 }
 
-AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton, bool build_as_additive)
+AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr &skeleton_, bool build_as_additive)
 {
 
   ozz::animation::offline::RawAnimation raw_animation;
@@ -73,6 +98,7 @@ AnimationPtr create_animation(const aiAnimation &ai_animation, const SkeletonPtr
   double secondsPerTick = 1.f / ai_animation.mTicksPerSecond;
   raw_animation.duration = ai_animation.mDuration * secondsPerTick;
   raw_animation.name = ai_animation.mName.C_Str();
+  const auto &skeleton = skeleton_->skeleton;
 
   raw_animation.tracks.resize(skeleton->num_joints());
 

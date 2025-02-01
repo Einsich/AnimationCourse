@@ -114,7 +114,8 @@ void render_arrows(const mat4 &cameraProjView, vec3 cameraPosition, const Direct
 
   glDepthFunc(GL_ALWAYS);
   glDepthMask(GL_FALSE);
-
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   shader.use();
 
   shader.set_mat4x4("ViewProjection", cameraProjView);
@@ -135,6 +136,7 @@ void render_arrows(const mat4 &cameraProjView, vec3 cameraPosition, const Direct
 
   glDepthFunc(GL_LESS);
   glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
 
   renderer.instancesTm.clear();
   renderer.instancesColor.clear();

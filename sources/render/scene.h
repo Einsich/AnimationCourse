@@ -1,6 +1,8 @@
 #pragma once
 
 #include "mesh.h"
+#include "ozz/base/maths/simd_math.h"
+
 
 namespace ozz
 {
@@ -11,7 +13,14 @@ namespace ozz
   }
 }
 
-using SkeletonPtr = std::shared_ptr<ozz::animation::Skeleton>;
+struct Skeleton
+{
+  std::shared_ptr<ozz::animation::Skeleton> skeleton;
+  std::vector<ozz::math::Float4x4> invBindPose;
+  std::vector<ozz::math::Float4x4> bindPose;
+};
+
+using SkeletonPtr = std::shared_ptr<Skeleton>;
 using AnimationPtr = std::shared_ptr<ozz::animation::Animation>;
 
 struct SceneAsset

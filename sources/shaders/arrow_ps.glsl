@@ -39,5 +39,5 @@ void main()
   vec3 color = LightedColor(vsOutput.Color, shininess, metallness,
     vsOutput.WorldPosition, vsOutput.EyespaceNormal, LightDirection, CameraPosition);
   color = vsOutput.Color;
-  FragColor = vec4(color, 1.0);
+  FragColor = vec4(color, 0.2);
 }
